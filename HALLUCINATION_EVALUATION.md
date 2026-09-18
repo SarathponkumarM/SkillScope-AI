@@ -52,3 +52,5 @@ Claim support requires a human reviewer or a separately validated judge. Citatio
 ## Required experiment
 
 At least two technical reviewers should label a held-out set of answers. They should record the human score, whether each generated claim is supported, which citations are relevant and whether the learning recommendation follows from the evidence. The team should report the metrics produced by `evaluate_rag_quality.py` and disagreements between reviewers. The included example JSONL demonstrates the calculation only and must not be reported as final model performance.
+
+The evaluator validates that every case has the required labels and that scores are in the 0–100 range. It reports MAE, RMSE, the proportion within ten points, competency precision/recall/F1, competency agreement, citation precision/recall, claim groundedness and hallucination rate. Optional command-line thresholds turn these measurements into auditable release gates; a failed gate returns a non-zero exit code. These controls detect risk but do not prove that hallucination is impossible.

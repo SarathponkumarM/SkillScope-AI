@@ -87,6 +87,44 @@ class RoleAwareRetriever:
         ranked = sorted(zip(candidates, scores), key=lambda item: (-item[1], self.chunks[item[0]]["chunk_id"]))
         return [RetrievalResult(self.chunks[i], float(score)) for i, score in ranked[:top_k]]
 
+    def retrieve_for_assessment(
+        self, question: dict, employee_answer: str = "", top_k: int = 5
+    ) -> list[RetrievalResult]:
+        """Return verified authoring evidence plus complementary role evidence.
+
+        Every curated assessment question has a reference_chunk_id identifying
+        the approved passage from which it was authored. Keeping that passage
+        in the context prevents a lexical miss from removing the ground truth.
+        TF-IDF still supplies the remaining passages for wider explanation.
+        """
+        if top_k < 1:
+            return []
+        reference_id = question.get("reference_chunk_id")
+        reference = next(
+            (row for row in self.chunks if row.get("chunk_id") == reference_id), None
+        )
+        if reference is None:
+            raise ValueError(
+                f"Question {question.get('question_id', '<unknown>')} references "
+                f"missing evidence chunk {reference_id!r}."
+            )
+        if reference.get("role") != question.get("role"):
+            raise ValueError("Question reference evidence does not match the assigned role.")
+
+        query = " ".join(
+            [
+                question.get("question", ""),
+                employee_answer,
+                question.get("required_concepts", "").replace("|", " "),
+            ]
+        )
+        complementary = self.retrieve(query, role=question.get("role"), top_k=top_k)
+        results = [RetrievalResult(reference, 1.0)]
+        results.extend(
+            item for item in complementary if item.chunk.get("chunk_id") != reference_id
+        )
+        return results[:top_k]
+
 
 def build_assessment_sets(
     questions: list[dict],
@@ -190,7 +228,13 @@ def score_response(response: dict, question: dict) -> dict:
 
 
 def _invitation_secret() -> bytes:
-    return os.getenv("SKILLSCOPE_INVITATION_SECRET", "skillscope-local-demo-change-me").encode()
+    secret = os.getenv("SKILLSCOPE_INVITATION_SECRET", "")
+    if len(secret) < 32:
+        raise RuntimeError(
+            "Set SKILLSCOPE_INVITATION_SECRET to a private value of at least "
+            "32 characters before creating or opening candidate links."
+        )
+    return secret.encode()
 
 
 def create_invitation_token(participant_id: str, role: str, expires_at: int | None = None) -> str:

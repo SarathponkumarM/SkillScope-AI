@@ -2,9 +2,9 @@
 
 ## Implemented RAG boundary
 
-1. The employee answer, assessment question and required concepts form the retrieval query.
-2. Role filtering restricts the search to the employee's technical domain.
-3. TF-IDF and cosine similarity retrieve the top five evidence chunks.
+1. The approved authoring passage identified by `reference_chunk_id` is inserted as the verified evidence anchor.
+2. The employee answer, assessment question and required concepts form the complementary retrieval query.
+3. Role-filtered TF-IDF and cosine similarity fill the remaining top-five evidence positions.
 4. The prompt builder adds the question, untrusted employee answer, rubric and retrieved evidence.
 5. Ollama generates a structured evaluation using only the supplied evidence.
 6. The validator clamps the score and rejects citations that are not in the retrieved set.
@@ -16,7 +16,7 @@
     Employee answer
         |
         v
-    Role-aware retriever <--- 120 approved knowledge chunks
+    Verified question anchor + role-aware retriever <--- 120 approved knowledge chunks
         |
         v
     Top-five evidence chunks
@@ -49,8 +49,9 @@
 
 The generator integration is implemented and tested with a mock generator. A live
 Ollama response must be tested on a machine where Ollama and the configured model
-are installed. Dense embeddings and hybrid retrieval remain the next retrieval
-improvement.
+are installed. Dense embeddings and hybrid retrieval remain possible future
+improvements for complementary evidence; approved authoring evidence no longer
+depends on lexical rediscovery.
 
 ## Version 3 marking and feedback boundary
 

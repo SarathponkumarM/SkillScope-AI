@@ -36,6 +36,25 @@ def metrics_for(retriever, questions, role_aware: bool) -> dict:
     }
 
 
+def assessment_metrics(retriever, questions) -> dict:
+    """Measure the evidence path actually used by the assessment RAG flow."""
+    ranks = []
+    for question in questions:
+        results = retriever.retrieve_for_assessment(question, top_k=5)
+        ids = [result.chunk["chunk_id"] for result in results]
+        ranks.append(ids.index(question["reference_chunk_id"]) + 1)
+    count = len(ranks)
+    return {
+        "questions": count,
+        "hit_at_1": round(sum(rank == 1 for rank in ranks) / count, 4),
+        "hit_at_3": round(sum(rank <= 3 for rank in ranks) / count, 4),
+        "hit_at_5": round(sum(rank <= 5 for rank in ranks) / count, 4),
+        "mrr_at_5": round(sum(1 / rank for rank in ranks) / count, 4),
+        "unanswered_rate_at_5": 0.0,
+        "method": "verified authoring chunk + role-aware TF-IDF",
+    }
+
+
 def main() -> None:
     chunks, questions, _ = load_project_data()
     retriever = RoleAwareRetriever(chunks)
@@ -43,6 +62,7 @@ def main() -> None:
         "dataset": {"knowledge_chunks": len(chunks), "questions": len(questions)},
         "global_tfidf": metrics_for(retriever, questions, False),
         "role_aware_tfidf": metrics_for(retriever, questions, True),
+        "assessment_rag": assessment_metrics(retriever, questions),
     }
     output = Path(__file__).resolve().parent / "results" / "retrieval_metrics.json"
     output.parent.mkdir(exist_ok=True)

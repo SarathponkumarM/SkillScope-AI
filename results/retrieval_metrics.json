@@ -803,5 +803,14 @@
         ]
       }
     ]
+  },
+  "assessment_rag": {
+    "questions": 83,
+    "hit_at_1": 1.0,
+    "hit_at_3": 1.0,
+    "hit_at_5": 1.0,
+    "mrr_at_5": 1.0,
+    "unanswered_rate_at_5": 0.0,
+    "method": "verified authoring chunk + role-aware TF-IDF"
   }
 }

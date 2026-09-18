@@ -1,7 +1,10 @@
+import os
 import time
 import unittest
 
-from evaluate_rag_quality import calculate_metrics
+from evaluate_rag_quality import calculate_metrics, validate_rows
+from rag_pipeline import RAGEvaluator
+from skillscope_core import RoleAwareRetriever, load_project_data
 from skillscope_core import (
     create_invitation_token, load_quizzes, score_answer, score_response,
     verify_invitation_token,
@@ -9,6 +12,16 @@ from skillscope_core import (
 
 
 class SkillScopeV3Tests(unittest.TestCase):
+    def setUp(self):
+        self.previous_secret = os.environ.get("SKILLSCOPE_INVITATION_SECRET")
+        os.environ["SKILLSCOPE_INVITATION_SECRET"] = "x" * 32
+
+    def tearDown(self):
+        if self.previous_secret is None:
+            os.environ.pop("SKILLSCOPE_INVITATION_SECRET", None)
+        else:
+            os.environ["SKILLSCOPE_INVITATION_SECRET"] = self.previous_secret
+
     def test_word_variants_are_matched_without_grammar_marking(self):
         question = {"required_concepts": "identify|object", "max_score": 10}
         result = score_answer("The service identifies and identified the object.", question)
@@ -46,6 +59,11 @@ class SkillScopeV3Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expired"):
             verify_invitation_token(token)
 
+    def test_short_invitation_secret_is_rejected(self):
+        os.environ["SKILLSCOPE_INVITATION_SECRET"] = "short"
+        with self.assertRaisesRegex(RuntimeError, "at least 32 characters"):
+            create_invitation_token("EMP-42", "qa_test_engineer")
+
     def test_hallucination_metrics(self):
         metrics = calculate_metrics([{
             "human_score": 80, "model_score": 70,
@@ -55,6 +73,53 @@ class SkillScopeV3Tests(unittest.TestCase):
         self.assertEqual(metrics["score_mae"], 10.0)
         self.assertEqual(metrics["citation_precision"], 0.5)
         self.assertEqual(metrics["hallucination_rate"], 0.5)
+        self.assertEqual(metrics["score_rmse"], 10.0)
+        self.assertEqual(metrics["scores_within_10_points"], 1.0)
+
+    def test_quality_labels_are_validated(self):
+        with self.assertRaisesRegex(ValueError, "missing required fields"):
+            validate_rows([{"human_score": 80, "model_score": 80}])
+
+    def test_out_of_range_quality_score_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "between 0 and 100"):
+            validate_rows([{
+                "human_score": 101, "model_score": 80,
+                "cited_chunk_ids": [], "allowed_chunk_ids": [], "claim_support": [],
+            }])
+
+    def test_off_topic_rag_score_is_capped_and_flagged(self):
+        chunks, questions, _ = load_project_data()
+        question = questions[0]
+
+        class OverGenerousGenerator:
+            def generate_json(self, system_prompt, user_prompt):
+                return {
+                    "score": 10, "strengths": ["none"],
+                    "missing_concepts": [], "improvement_areas": [],
+                    "evidence_chunk_ids": [], "confidence": "high",
+                    "rationale": "Over-generous test output",
+                }
+
+        evaluator = RAGEvaluator(RoleAwareRetriever(chunks), generator=OverGenerousGenerator())
+        result = evaluator.evaluate(question, "bananas purple bicycle")
+        self.assertLessEqual(result["score"], 2.0)
+        self.assertEqual(result["confidence"], "low")
+        self.assertEqual(result["official_accuracy"], 0.0)
+        self.assertTrue(result["human_review_required"])
+
+    def test_assessment_retrieval_always_contains_verified_reference(self):
+        chunks, questions, _ = load_project_data()
+        retriever = RoleAwareRetriever(chunks)
+        for question in questions:
+            results = retriever.retrieve_for_assessment(question, top_k=5)
+            self.assertEqual(results[0].chunk["chunk_id"], question["reference_chunk_id"])
+            self.assertTrue(all(item.chunk["role"] == question["role"] for item in results))
+
+    def test_missing_assessment_reference_is_rejected(self):
+        chunks, questions, _ = load_project_data()
+        broken = dict(questions[0]); broken["reference_chunk_id"] = "MISSING"
+        with self.assertRaisesRegex(ValueError, "missing evidence chunk"):
+            RoleAwareRetriever(chunks).retrieve_for_assessment(broken)
 
 
 if __name__ == "__main__":

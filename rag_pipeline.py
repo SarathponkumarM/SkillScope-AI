@@ -164,14 +164,10 @@ class RAGEvaluator:
         self.top_k = top_k
 
     def evaluate(self, question: dict, employee_answer: str) -> dict:
-        query = " ".join(
-            [
-                question["question"],
-                employee_answer,
-                question.get("required_concepts", "").replace("|", " "),
-            ]
+        deterministic = score_answer(employee_answer, question)
+        retrieved = self.retriever.retrieve_for_assessment(
+            question, employee_answer=employee_answer, top_k=self.top_k
         )
-        retrieved = self.retriever.retrieve(query, role=question["role"], top_k=self.top_k)
         evidence = [item.chunk for item in retrieved]
         if not evidence:
             raise GenerationError("No role-specific evidence was retrieved.")
@@ -183,6 +179,14 @@ class RAGEvaluator:
             allowed_chunk_ids={row["chunk_id"] for row in evidence},
             max_score=question.get("max_score", 10),
         )
+        # The LLM is advisory only. If the answer contains none of the approved
+        # concepts, do not permit a confident high developmental score even if
+        # the generator is overly generous.
+        if deterministic["accuracy"] == 0:
+            evaluation["score"] = min(
+                evaluation["score"], round(float(question.get("max_score", 10)) * 0.2, 1)
+            )
+            evaluation["confidence"] = "low"
         evaluation.update(
             {
                 "mode": "rag",
@@ -198,6 +202,8 @@ class RAGEvaluator:
                     for item in retrieved
                 ],
                 "human_review_required": True,
+                "official_accuracy": deterministic["accuracy"],
+                "official_competent": deterministic["competent"],
             }
         )
         return evaluation
@@ -217,6 +223,8 @@ class RAGEvaluator:
                 "evidence_chunk_ids": [],
                 "confidence": "low",
                 "human_review_required": True,
+                "official_accuracy": baseline["accuracy"],
+                "official_competent": baseline["competent"],
                 "rationale": str(exc),
                 "retrieved_evidence": [],
             }
